@@ -25,7 +25,6 @@ import { DraftType, Menu, PermissionsBits, PermissionStore, React, Select, Selec
 const Native = VencordNative.pluginHelpers.BiggerFileUpload as PluginNative<typeof import("./native")>;
 
 const UploadStore = findByPropsLazy("getUploads");
-const OptionClasses = findByPropsLazy("optionName", "optionIcon", "optionLabel");
 const videoExtensions = [".mp4", ".mkv", ".webm", ".avi", ".mov", ".flv", ".wmv", ".m4v", ".mpg", ".mpeg", ".3gp", ".ogv"];
 const uploadErrorMessage = "**Unable to upload file.** Check the console for more info.\n-# This is likely an issue with your network connection, firewall, or VPN.";
 
@@ -686,8 +685,7 @@ async function uploadFileToCatbox(file: File, channelId: string, temporary: bool
             let finalUrl = uploadResult;
 
             if (videoExtensions.some(ext => finalUrl.endsWith(ext))) {
-                const uploadedFileName = finalUrl.split("/").pop();
-                finalUrl = `https://embeds.video/cat/${uploadedFileName}`;
+                finalUrl = await Native.getEmbeddrLinkNative(finalUrl);
             }
 
             setTimeout(() => sendTextToChat(finalUrl), 10);
@@ -769,7 +767,7 @@ async function uploadFileCustom(file: File, channelId: string) {
             let finalUrlModified = finalUrl;
 
             if (videoExtensions.some(ext => finalUrlModified.endsWith(ext))) {
-                finalUrlModified = `https://embeds.video/${finalUrlModified}`;
+                finalUrlModified = await Native.getEmbeddrLinkNative(finalUrlModified);
             }
 
             setTimeout(() => sendTextToChat(`${finalUrlModified} `), 10);
@@ -844,12 +842,12 @@ const ctxMenuPatch: NavContextMenuPatchCallback = (children, props) => {
     children.splice(1, 0,
         <Menu.MenuItem
             id="upload-big-file"
-            label={
-                <div className={OptionClasses.optionLabel}>
-                    <OpenExternalIcon className={OptionClasses.optionIcon} height={24} width={24} />
-                    <div className={OptionClasses.optionName}>Upload a Big File</div>
-                </div>
-            }
+            iconLeft={OpenExternalIcon}
+            leadingAccessory={{
+                type: "icon",
+                icon: OpenExternalIcon
+            }}
+            label="Upload a Big File"
             action={triggerFileUpload}
         />
     );
