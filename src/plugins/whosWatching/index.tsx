@@ -12,13 +12,12 @@ import { Paragraph } from "@components/Paragraph";
 import { Devs } from "@utils/constants";
 import { classNameFactory } from "@utils/css";
 import { getIntlMessage, openUserProfile } from "@utils/discord";
-import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
 import definePlugin, { OptionType } from "@utils/types";
 import { User } from "@vencord/discord-types";
 import { findComponentByCodeLazy, findCssClassesLazy, findStoreLazy } from "@webpack";
 import { Clickable, RelationshipStore, Tooltip, UserStore, useStateFromStores } from "@webpack/common";
-import { JSX } from "react";
+import type { JSX } from "react";
 
 interface WatchingProps {
     userIds: string[];
@@ -51,17 +50,9 @@ function Watching({ userIds, guildId }: WatchingProps): JSX.Element {
                 (<>
                     <Heading>{getIntlMessage("SPECTATORS", { numViewers: userIds.length })}</Heading>
                     <Flex flexDirection="column" style={{ gap: 6 }} >
-                        {users.map((user, index) => (
-                            <Flex
-                                key={userIds[index]} // Use userIds for key here
-                                flexDirection="row"
-                                style={{ gap: 6, alignContent: "center" }}
-                                className={cl("user")}
-                            >
-                                <img
-                                    src={user.getAvatarURL(guildId)}
-                                    style={{ borderRadius: 8, width: 16, height: 16 }}
-                                />
+                        {users.map(user => (
+                            <Flex key={user.id} flexDirection="row" style={{ gap: 6, alignContent: "center" }} className={cl("user")} >
+                                <img src={user.getAvatarURL(guildId)} style={{ borderRadius: 8, width: 16, height: 16 }} />
                                 {getUsername(user)}
                             </Flex>
                         ))}
@@ -76,7 +67,8 @@ function Watching({ userIds, guildId }: WatchingProps): JSX.Element {
 const ApplicationStreamingStore = findStoreLazy("ApplicationStreamingStore");
 
 const UserSummaryItem = findComponentByCodeLazy("defaultRenderUser", "showDefaultAvatarsForNullUsers");
-const AvatarStyles = findCssClassesLazy("moreUsers", "emptyUser", "avatarContainer", "clickableAvatar", "avatar");
+const ActivityPanelStyles = findCssClassesLazy("activityPanel");
+const AvatarStyles = findCssClassesLazy("moreUsers", "clickableAvatar", "avatar");
 
 export default definePlugin({
     name: "WhosWatching",
@@ -94,12 +86,12 @@ export default definePlugin({
                 replace: "jsx)($self.component({OriginalComponent:$1}),{mask:"
             }
         },
-        {
+        { // New panel patch
             predicate: () => settings.store.showPanel,
-            find: "this.renderEmbeddedActivity()",
+            find: "this.renderVoicePanelIntroduction",
             replacement: {
-                match: /"div"(?=.{0,50}this.renderActions)/,
-                replace: "$self.WrapperComponent"
+                match: /(let{(?:channel:\i,)?canGoLive.{0,1500}\()"div"(?=,{(?:ref:this\.ref,)?className:\i(?:\.body|\(\)\(|\.\i))/,
+                replace: "$1$self.WrapperComponent"
             }
         }
     ],
@@ -130,11 +122,10 @@ export default definePlugin({
 
         return (
             <>
-                <div {...props}>{props.children}</div>
-                <div className={classes(cl("spectators_panel"), Margins.top8)}>
+                <div className={classes(cl("spectators_panel"), ActivityPanelStyles.activityPanel)}>
                     {users.length ?
                         <>
-                            <Heading tag="h3" style={{ marginTop: 8, marginBottom: 0, textTransform: "uppercase" }}>
+                            <Heading tag="h3" style={{ marginTop: 0, marginBottom: 0, textTransform: "uppercase" }}>
                                 {getIntlMessage("SPECTATORS", { numViewers: userIds.length })}
                             </Heading>
                             <UserSummaryItem
@@ -162,6 +153,7 @@ export default definePlugin({
                         : <Paragraph>No spectators</Paragraph>
                     }
                 </div>
+                <div {...props}>{props.children}</div>
             </>
         );
     }),
