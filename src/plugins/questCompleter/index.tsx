@@ -31,6 +31,10 @@ const FLUX_EVENTS = {
 const ApplicationStreamingStore = findStoreLazy("ApplicationStreamingStore");
 const questAssetsBaseUrl = "https://cdn.discordapp.com/quests/";
 const QUEST_TASKS = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE"] as const;
+const HEARTBEAT_MAX_INTERVAL_MS = 60 * 1000;
+const HEARTBEAT_FINAL_BUFFER_MS = 1000;
+const VIDEO_PROGRESS_MIN_CHECKPOINTS = 2;
+const VIDEO_PROGRESS_MAX_CHECKPOINTS = 4;
 
 type QuestTaskName = typeof QUEST_TASKS[number];
 
@@ -43,14 +47,13 @@ const QUEST_ERROR_MESSAGES: Record<QuestTaskName, string> = {
 };
 
 interface RunningQuest {
-    interval?: NodeJS.Timeout;
     cleanup?: () => void;
     questId: string;
     applicationName: string;
     questName: string;
     taskName: QuestTaskName;
     gameInstance?: any;
-    progressInterval?: NodeJS.Timeout;
+    progressTimeout?: ReturnType<typeof setTimeout>;
     cancelled?: boolean;
 }
 
@@ -120,13 +123,9 @@ function endQuest(questId: string) {
     console.log("[Quest] Ending quest:", questData.questName);
     questData.cancelled = true;
 
-    if (questData.interval) {
-        clearInterval(questData.interval);
-        console.log("[Quest] Cleared main interval");
-    }
-    if (questData.progressInterval) {
-        clearInterval(questData.progressInterval);
-        console.log("[Quest] Cleared progress interval");
+    if (questData.progressTimeout) {
+        clearTimeout(questData.progressTimeout);
+        console.log("[Quest] Cleared progress timeout");
     }
 
     if (questData.cleanup) {
@@ -165,7 +164,47 @@ function sleep(ms: number) {
 }
 
 function getQuestProgress(quest: any, taskName: QuestTaskName) {
-    return quest.userStatus?.progress?.[taskName]?.value ?? 0;
+    return quest.config.configVersion === 1
+        ? quest.userStatus?.streamProgressSeconds ?? 0
+        : quest.userStatus?.progress?.[taskName]?.value ?? 0;
+}
+
+function getLatestQuestProgress(context: QuestCompletionContext, fallbackProgress = 0) {
+    const quest = getQuestById(context.quest.id) ?? context.quest;
+    return Math.max(getQuestProgress(quest, context.taskName), fallbackProgress);
+}
+
+function getHeartbeatResponseStatus(response: any) {
+    return response?.body?.userStatus ?? response?.body?.user_status ?? response?.body;
+}
+
+function getHeartbeatResponseProgress(context: QuestCompletionContext, response: any) {
+    const status = getHeartbeatResponseStatus(response);
+    return status?.progress?.[context.taskName]?.value
+        ?? status?.streamProgressSeconds
+        ?? status?.stream_progress_seconds
+        ?? 0;
+}
+
+function isHeartbeatCompleted(response: any) {
+    const status = getHeartbeatResponseStatus(response);
+    return status?.completedAt != null || status?.completed_at != null;
+}
+
+function calculateHeartbeatDurationMs(context: QuestCompletionContext, progressSeconds = getLatestQuestProgress(context)) {
+    const remainingMs = Math.max(0, (context.secondsNeeded - progressSeconds) * 1000);
+    return remainingMs <= HEARTBEAT_MAX_INTERVAL_MS
+        ? remainingMs + HEARTBEAT_FINAL_BUFFER_MS
+        : HEARTBEAT_MAX_INTERVAL_MS;
+}
+
+function getRandomInteger(min: number, max: number) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function calculateVideoProgressDurationMs(context: QuestCompletionContext, progressSeconds: number, checkpointIntervalMs: number) {
+    const remainingMs = Math.max(0, (context.secondsNeeded - progressSeconds) * 1000);
+    return Math.min(checkpointIntervalMs, remainingMs + HEARTBEAT_FINAL_BUFFER_MS);
 }
 
 function getQuestErrorMessage(context: QuestCompletionContext, error: unknown) {
@@ -198,65 +237,96 @@ async function runQuestStep(context: QuestCompletionContext, step: () => Promise
     }
 }
 
-function setQuestInterval(context: QuestCompletionContext, step: () => Promise<void> | void, delay: number) {
-    context.runningQuest.progressInterval = setInterval(() => {
-        void runQuestStep(context, step);
-    }, delay);
+function scheduleNextHeartbeat(context: QuestCompletionContext, beat: () => Promise<void>, progressSeconds: number) {
+    context.runningQuest.progressTimeout = setTimeout(() => {
+        void runQuestStep(context, beat);
+    }, calculateHeartbeatDurationMs(context, progressSeconds));
+}
+
+function scheduleNextVideoProgress(
+    context: QuestCompletionContext,
+    saveProgress: () => Promise<void>,
+    progressSeconds: number,
+    checkpointIntervalMs: number
+) {
+    context.runningQuest.progressTimeout = setTimeout(() => {
+        void runQuestStep(context, saveProgress);
+    }, calculateVideoProgressDurationMs(context, progressSeconds, checkpointIntervalMs));
+}
+
+async function runHeartbeatQuest(context: QuestCompletionContext, sendHeartbeat: () => Promise<any>, getLocalProgress = () => 0) {
+    const beat = async () => {
+        if (!isQuestRunning(context.quest.id)) return;
+
+        const response = await sendHeartbeat();
+        if (!isQuestRunning(context.quest.id)) return;
+
+        const progress = Math.max(
+            getLocalProgress(),
+            getHeartbeatResponseProgress(context, response),
+            getLatestQuestProgress(context)
+        );
+
+        if (isHeartbeatCompleted(response) || progress >= context.secondsNeeded) {
+            completeQuest(context);
+            return;
+        }
+
+        scheduleNextHeartbeat(context, beat, progress);
+    };
+
+    await beat();
 }
 
 async function completeVideoQuest(context: QuestCompletionContext) {
-    const STEP_SIZE = 7; // seconds advanced each tick
-    const GRACE_WINDOW = 10; // how far ahead the fake progress can be
-    const UPDATE_DELAY = 1; // seconds between each update
-
     const { quest, questName, secondsNeeded, taskName } = context;
-    const startedAt = new Date(quest.userStatus?.enrolledAt ?? Date.now() - 15 * 1000).getTime();
-    let progress = getQuestProgress(quest, taskName);
-    let done = false;
+    const progressAtStart = getQuestProgress(quest, taskName);
+    const startTime = Date.now();
+    const checkpointCount = getRandomInteger(VIDEO_PROGRESS_MIN_CHECKPOINTS, VIDEO_PROGRESS_MAX_CHECKPOINTS);
+    const remainingMs = Math.max(0, (secondsNeeded - progressAtStart) * 1000);
+    const checkpointIntervalMs = Math.ceil(remainingMs / checkpointCount);
+    let lastSubmittedProgress = progressAtStart;
 
-    console.log(`[Quest] Starting ${taskName}: ${questName} at ${progress}/${secondsNeeded}s`);
+    console.log(`[Quest] Starting ${taskName}: ${questName} at ${progressAtStart}/${secondsNeeded}s with ${checkpointCount} checkpoints`);
 
-    while (progress < secondsNeeded && !done && isQuestRunning(quest.id)) {
-        const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-        const maxReachable = elapsed + GRACE_WINDOW;
+    const getCurrentProgress = () => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return Math.min(progressAtStart + elapsed, secondsNeeded);
+    };
 
-        if (maxReachable >= progress + STEP_SIZE) {
-            const next = Math.min(secondsNeeded, progress + STEP_SIZE + Math.random());
-            const res = await RestAPI.post({
-                url: `/quests/${quest.id}/video-progress`,
-                body: { timestamp: next }
-            });
+    const saveProgress = async () => {
+        if (!isQuestRunning(quest.id)) return;
 
-            if (!isQuestRunning(quest.id)) return;
-
-            progress = next;
-            done = !!res.body?.completed_at;
-
-            if (done) {
-                console.log("[Quest] Server confirmed completion.");
-                break;
-            }
+        const timestamp = Math.max(getCurrentProgress(), lastSubmittedProgress);
+        if (timestamp <= lastSubmittedProgress && timestamp < secondsNeeded) {
+            scheduleNextVideoProgress(context, saveProgress, timestamp, checkpointIntervalMs);
+            return;
         }
 
-        if (progress >= secondsNeeded) break;
-        await sleep(UPDATE_DELAY * 1000);
-    }
-
-    if (!isQuestRunning(quest.id)) return;
-
-    if (!done) {
-        await RestAPI.post({
+        const response = await RestAPI.post({
             url: `/quests/${quest.id}/video-progress`,
-            body: { timestamp: secondsNeeded }
+            body: { timestamp }
         });
-        console.log("[Quest] Sent final completion timestamp.");
-    }
 
-    completeQuest(context);
+        if (!isQuestRunning(quest.id)) return;
+
+        lastSubmittedProgress = timestamp;
+
+        if (response.body?.completed_at || timestamp >= secondsNeeded) {
+            console.log("[Quest] Server confirmed video completion.");
+            completeQuest(context);
+            return;
+        }
+
+        console.log(`[Quest] Saved video progress at ${Math.floor(timestamp)}/${secondsNeeded}s.`);
+        scheduleNextVideoProgress(context, saveProgress, timestamp, checkpointIntervalMs);
+    };
+
+    scheduleNextVideoProgress(context, saveProgress, progressAtStart, checkpointIntervalMs);
 }
 
 async function completeDesktopQuest(context: QuestCompletionContext) {
-    const { quest, applicationId, applicationName, secondsNeeded, taskName, runningQuest } = context;
+    const { quest, applicationId, applicationName, secondsNeeded, runningQuest } = context;
     const RunningGameStore = findStoreLazy("RunningGameStore");
     const res = await RestAPI.get({ url: `/applications/public?application_ids=${applicationId}` });
 
@@ -303,7 +373,6 @@ async function completeDesktopQuest(context: QuestCompletionContext) {
 
     runningQuest.gameInstance = fakeGame;
     runningQuest.cleanup = () => {
-        clearInterval(runningQuest.progressInterval!);
         FluxDispatcher.dispatch({
             type: FLUX_EVENTS.RUNNING_GAMES,
             added: [],
@@ -319,53 +388,36 @@ async function completeDesktopQuest(context: QuestCompletionContext) {
         games: [...RunningGameStore.getRunningGames(), fakeGame]
     });
 
-    const getCurrentProgress = () => {
-        const currentQuest = getQuestById(quest.id);
-        if (!currentQuest) return 0;
+    const progressAtStart = getQuestProgress(quest, context.taskName);
+    const startTime = Date.now();
 
-        return quest.config.configVersion === 1
-            ? currentQuest.userStatus?.streamProgressSeconds || 0
-            : currentQuest.userStatus?.progress?.[taskName]?.value || 0;
+    const getCurrentProgress = () => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return Math.max(
+            getLatestQuestProgress(context),
+            Math.min(progressAtStart + elapsed, secondsNeeded)
+        );
     };
 
-    const sendHeartbeat = async () => {
-        await RestAPI.post({
-            url: `/quests/${quest.id}/heartbeat`,
-            body: {
-                stream_key: null,
-                terminal: false,
-                metadata: {
-                    game: {
-                        name: appData.name,
-                        pid,
-                        start: fakeGame.start
-                    }
+    const sendHeartbeat = () => RestAPI.post({
+        url: `/quests/${quest.id}/heartbeat`,
+        body: {
+            stream_key: null,
+            terminal: false,
+            metadata: {
+                game: {
+                    name: appData.name,
+                    pid,
+                    start: fakeGame.start
                 }
             }
-        });
-    };
+        }
+    });
 
-    const updateProgress = async () => {
-        await sendHeartbeat();
-        if (!isQuestRunning(quest.id)) return;
-
-        const progress = getCurrentProgress();
-        if (progress < secondsNeeded) return;
-        if (!isQuestRunning(quest.id)) return;
-
-        await sendHeartbeat();
-        if (!isQuestRunning(quest.id)) return;
-
-        completeQuest(context);
-    };
-
-    await updateProgress();
-    if (!isQuestRunning(quest.id)) return;
-
-    setQuestInterval(context, updateProgress, 30000);
+    await runHeartbeatQuest(context, sendHeartbeat, getCurrentProgress);
 }
 
-function completeStreamQuest(context: QuestCompletionContext) {
+async function completeStreamQuest(context: QuestCompletionContext) {
     const { quest, applicationId, currentStream, secondsNeeded, runningQuest } = context;
     const pid = Math.floor(Math.random() * 30000) + 1000;
     const realFunc = ApplicationStreamingStore.getStreamerActiveStreamMetadata;
@@ -377,33 +429,27 @@ function completeStreamQuest(context: QuestCompletionContext) {
     });
 
     runningQuest.cleanup = () => {
-        clearInterval(runningQuest.progressInterval!);
         ApplicationStreamingStore.getStreamerActiveStreamMetadata = realFunc;
     };
 
     const progressAtStart = getQuestProgress(quest, context.taskName);
     const startTime = Date.now();
 
-    const updateProgress = async () => {
+    const sendHeartbeat = () => RestAPI.post({
+        url: `/quests/${quest.id}/heartbeat`,
+        body: { stream_key: encodeStreamKey(currentStream), terminal: false }
+    });
+
+    const getCurrentProgress = () => {
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const progress = Math.min(progressAtStart + elapsed, secondsNeeded);
-
-        await RestAPI.post({
-            url: `/quests/${quest.id}/heartbeat`,
-            body: { stream_key: encodeStreamKey(currentStream), terminal: false }
-        });
-
-        if (!isQuestRunning(quest.id)) return;
-
-        if (progress >= secondsNeeded) completeQuest(context);
+        return Math.min(progressAtStart + elapsed, secondsNeeded);
     };
 
-    setQuestInterval(context, updateProgress, 30000);
-    void runQuestStep(context, updateProgress);
+    await runHeartbeatQuest(context, sendHeartbeat, getCurrentProgress);
 }
 
-function completeActivityQuest(context: QuestCompletionContext) {
-    const { quest, secondsNeeded, runningQuest } = context;
+async function completeActivityQuest(context: QuestCompletionContext) {
+    const { quest, secondsNeeded } = context;
     const questsHeartbeat = findByCode("QUESTS_HEARTBEAT");
     const channelId = ChannelStore.getSortedPrivateChannels()[0]?.id ??
         (Object.values(GuildChannelStore.getAllGuilds()) as any[])
@@ -415,27 +461,14 @@ function completeActivityQuest(context: QuestCompletionContext) {
     const progressAtStart = getQuestProgress(quest, context.taskName);
     const startTime = Date.now();
 
-    const updateProgress = async () => {
+    const sendHeartbeat = () => questsHeartbeat({ questId: quest.id, streamKey, terminal: false });
+
+    const getCurrentProgress = () => {
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
-        const progress = Math.min(progressAtStart + elapsed, secondsNeeded);
-
-        await questsHeartbeat({ questId: quest.id, streamKey, terminal: false });
-
-        if (!isQuestRunning(quest.id)) return;
-        if (progress < secondsNeeded) return;
-
-        await questsHeartbeat({ questId: quest.id, stream_key: streamKey, terminal: true });
-        if (!isQuestRunning(quest.id)) return;
-
-        completeQuest(context);
+        return Math.min(progressAtStart + elapsed, secondsNeeded);
     };
 
-    runningQuest.cleanup = () => {
-        clearInterval(runningQuest.progressInterval!);
-    };
-
-    setQuestInterval(context, updateProgress, 20000);
-    void runQuestStep(context, updateProgress);
+    await runHeartbeatQuest(context, sendHeartbeat, getCurrentProgress);
 }
 
 const questCompleters: Record<QuestTaskName, (context: QuestCompletionContext) => Promise<void> | void> = {
