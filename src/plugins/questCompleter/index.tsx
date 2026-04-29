@@ -17,31 +17,60 @@
 */
 
 import { showNotification } from "@api/Notifications";
+import { BaseText } from "@components/BaseText";
+import { Span } from "@components/Span";
 import { Devs } from "@utils/constants";
 import definePlugin from "@utils/types";
 import { findByCode, findByProps, findStoreLazy } from "@webpack";
-import { ChannelStore, FluxDispatcher, GuildChannelStore, RestAPI, showToast, Text, Toasts } from "@webpack/common";
+import { ChannelStore, FluxDispatcher, GuildChannelStore, RestAPI, showToast, Toasts, useEffect, useState } from "@webpack/common";
 
 const FLUX_EVENTS = {
-    RUNNING_GAMES: "RUNNING_GAMES_CHANGE",
-    QUESTS_HEARTBEAT: "QUESTS_SEND_HEARTBEAT_SUCCESS"
+    RUNNING_GAMES: "RUNNING_GAMES_CHANGE"
 } as const;
 
 const ApplicationStreamingStore = findStoreLazy("ApplicationStreamingStore");
 const questAssetsBaseUrl = "https://cdn.discordapp.com/quests/";
+const QUEST_TASKS = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE"] as const;
+const HEARTBEAT_MAX_INTERVAL_MS = 60 * 1000;
+const HEARTBEAT_FINAL_BUFFER_MS = 1000;
+const VIDEO_PROGRESS_MIN_CHECKPOINTS = 2;
+const VIDEO_PROGRESS_MAX_CHECKPOINTS = 4;
+
+type QuestTaskName = typeof QUEST_TASKS[number];
+
+const QUEST_ERROR_MESSAGES: Record<QuestTaskName, string> = {
+    WATCH_VIDEO: "Failed to update video progress",
+    WATCH_VIDEO_ON_MOBILE: "Failed to update video progress",
+    PLAY_ON_DESKTOP: "Failed to update game progress",
+    STREAM_ON_DESKTOP: "Failed to update stream progress",
+    PLAY_ACTIVITY: "Failed to update activity progress"
+};
 
 interface RunningQuest {
-    interval?: NodeJS.Timeout;
     cleanup?: () => void;
     questId: string;
     applicationName: string;
     questName: string;
-    taskName: string;
+    taskName: QuestTaskName;
     gameInstance?: any;
-    progressInterval?: NodeJS.Timeout;
+    progressTimeout?: ReturnType<typeof setTimeout>;
+    cancelled?: boolean;
+}
+
+interface QuestCompletionContext {
+    quest: any;
+    currentStream: any;
+    runningQuest: RunningQuest;
+    applicationId: string;
+    applicationName: string;
+    questName: string;
+    secondsNeeded: number;
+    taskName: QuestTaskName;
+    showQuestNotification(title: string, body: string): void;
 }
 
 const runningQuests = new Map<string, RunningQuest>();
+const runningQuestListeners = new Set<() => void>();
 const isApp = navigator.userAgent.includes("Electron/");
 
 function getQuestById(questId: string) {
@@ -62,28 +91,64 @@ function encodeStreamKey(e): string {
     }
 }
 
-function stopQuest(questId: string) {
+function getRunningQuestsSnapshot() {
+    return Array.from(runningQuests.values());
+}
+
+function emitRunningQuestsChange() {
+    for (const listener of runningQuestListeners) listener();
+}
+
+function useRunningQuests() {
+    const [quests, setQuests] = useState<RunningQuest[]>(getRunningQuestsSnapshot);
+
+    useEffect(() => {
+        const listener = () => setQuests(getRunningQuestsSnapshot());
+        runningQuestListeners.add(listener);
+
+        return () => void runningQuestListeners.delete(listener);
+    }, []);
+
+    return quests;
+}
+
+function isQuestRunning(questId: string) {
+    return runningQuests.has(questId) && !runningQuests.get(questId)?.cancelled;
+}
+
+function endQuest(questId: string) {
     const questData = runningQuests.get(questId);
-    if (!questData) return;
+    if (!questData) return null;
 
-    console.log("[Quest] Stopping quest:", questData.questName);
+    console.log("[Quest] Ending quest:", questData.questName);
+    questData.cancelled = true;
 
-    if (questData.interval) {
-        clearInterval(questData.interval);
-        console.log("[Quest] Cleared main interval");
-    }
-    if (questData.progressInterval) {
-        clearInterval(questData.progressInterval);
-        console.log("[Quest] Cleared progress interval");
+    if (questData.progressTimeout) {
+        clearTimeout(questData.progressTimeout);
+        console.log("[Quest] Cleared progress timeout");
     }
 
     if (questData.cleanup) {
         console.log("[Quest] Executing cleanup");
-        questData.cleanup();
+        try {
+            questData.cleanup();
+        } catch (error) {
+            console.error("[Quest] Cleanup failed:", error);
+        }
     }
 
     runningQuests.delete(questId);
+    emitRunningQuestsChange();
     console.log("[Quest] Removed from tracking");
+
+    return questData;
+}
+
+function stopQuest(questId: string) {
+    const questData = endQuest(questId);
+    if (!questData) return;
+
+    showToast(`Stopped quest: ${questData.questName}`, Toasts.Type.MESSAGE);
 }
 
 function getQuestImageConfig(questId: string) {
@@ -94,62 +159,382 @@ function getQuestImageConfig(questId: string) {
     };
 }
 
+function sleep(ms: number) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getQuestProgress(quest: any, taskName: QuestTaskName) {
+    return quest.config.configVersion === 1
+        ? quest.userStatus?.streamProgressSeconds ?? 0
+        : quest.userStatus?.progress?.[taskName]?.value ?? 0;
+}
+
+function getLatestQuestProgress(context: QuestCompletionContext, fallbackProgress = 0) {
+    const quest = getQuestById(context.quest.id) ?? context.quest;
+    return Math.max(getQuestProgress(quest, context.taskName), fallbackProgress);
+}
+
+function getHeartbeatResponseStatus(response: any) {
+    return response?.body?.userStatus ?? response?.body?.user_status ?? response?.body;
+}
+
+function getHeartbeatResponseProgress(context: QuestCompletionContext, response: any) {
+    const status = getHeartbeatResponseStatus(response);
+    return status?.progress?.[context.taskName]?.value
+        ?? status?.streamProgressSeconds
+        ?? status?.stream_progress_seconds
+        ?? 0;
+}
+
+function isHeartbeatCompleted(response: any) {
+    const status = getHeartbeatResponseStatus(response);
+    return status?.completedAt != null || status?.completed_at != null;
+}
+
+function calculateHeartbeatDurationMs(context: QuestCompletionContext, progressSeconds = getLatestQuestProgress(context)) {
+    const remainingMs = Math.max(0, (context.secondsNeeded - progressSeconds) * 1000);
+    return remainingMs <= HEARTBEAT_MAX_INTERVAL_MS
+        ? remainingMs + HEARTBEAT_FINAL_BUFFER_MS
+        : HEARTBEAT_MAX_INTERVAL_MS;
+}
+
+function getRandomInteger(min: number, max: number) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function calculateVideoProgressDurationMs(context: QuestCompletionContext, progressSeconds: number, checkpointIntervalMs: number) {
+    const remainingMs = Math.max(0, (context.secondsNeeded - progressSeconds) * 1000);
+    return Math.min(checkpointIntervalMs, remainingMs + HEARTBEAT_FINAL_BUFFER_MS);
+}
+
+function getQuestErrorMessage(context: QuestCompletionContext, error: unknown) {
+    if (error instanceof Error && error.message) return error.message;
+
+    return QUEST_ERROR_MESSAGES[context.taskName];
+}
+
+function completeQuest(context: QuestCompletionContext) {
+    if (!endQuest(context.quest.id)) return;
+
+    context.showQuestNotification("Completed", "Quest finished!");
+    console.log(`[Quest] ${context.questName} completed.`);
+}
+
+function failQuest(context: QuestCompletionContext, error: unknown) {
+    if (!endQuest(context.quest.id)) return;
+
+    console.error(`[Quest] ${context.taskName} failed:`, error);
+    showToast(getQuestErrorMessage(context, error), Toasts.Type.FAILURE);
+}
+
+async function runQuestStep(context: QuestCompletionContext, step: () => Promise<void> | void) {
+    if (!isQuestRunning(context.quest.id)) return;
+
+    try {
+        await step();
+    } catch (error) {
+        failQuest(context, error);
+    }
+}
+
+function scheduleNextHeartbeat(context: QuestCompletionContext, beat: () => Promise<void>, progressSeconds: number) {
+    context.runningQuest.progressTimeout = setTimeout(() => {
+        void runQuestStep(context, beat);
+    }, calculateHeartbeatDurationMs(context, progressSeconds));
+}
+
+function scheduleNextVideoProgress(
+    context: QuestCompletionContext,
+    saveProgress: () => Promise<void>,
+    progressSeconds: number,
+    checkpointIntervalMs: number
+) {
+    context.runningQuest.progressTimeout = setTimeout(() => {
+        void runQuestStep(context, saveProgress);
+    }, calculateVideoProgressDurationMs(context, progressSeconds, checkpointIntervalMs));
+}
+
+async function runHeartbeatQuest(context: QuestCompletionContext, sendHeartbeat: () => Promise<any>, getLocalProgress = () => 0) {
+    const beat = async () => {
+        if (!isQuestRunning(context.quest.id)) return;
+
+        const response = await sendHeartbeat();
+        if (!isQuestRunning(context.quest.id)) return;
+
+        const progress = Math.max(
+            getLocalProgress(),
+            getHeartbeatResponseProgress(context, response),
+            getLatestQuestProgress(context)
+        );
+
+        if (isHeartbeatCompleted(response) || progress >= context.secondsNeeded) {
+            completeQuest(context);
+            return;
+        }
+
+        scheduleNextHeartbeat(context, beat, progress);
+    };
+
+    await beat();
+}
+
+async function completeVideoQuest(context: QuestCompletionContext) {
+    const { quest, questName, secondsNeeded, taskName } = context;
+    const progressAtStart = getQuestProgress(quest, taskName);
+    const startTime = Date.now();
+    const checkpointCount = getRandomInteger(VIDEO_PROGRESS_MIN_CHECKPOINTS, VIDEO_PROGRESS_MAX_CHECKPOINTS);
+    const remainingMs = Math.max(0, (secondsNeeded - progressAtStart) * 1000);
+    const checkpointIntervalMs = Math.ceil(remainingMs / checkpointCount);
+    let lastSubmittedProgress = progressAtStart;
+
+    console.log(`[Quest] Starting ${taskName}: ${questName} at ${progressAtStart}/${secondsNeeded}s with ${checkpointCount} checkpoints`);
+
+    const getCurrentProgress = () => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return Math.min(progressAtStart + elapsed, secondsNeeded);
+    };
+
+    const saveProgress = async () => {
+        if (!isQuestRunning(quest.id)) return;
+
+        const timestamp = Math.max(getCurrentProgress(), lastSubmittedProgress);
+        if (timestamp <= lastSubmittedProgress && timestamp < secondsNeeded) {
+            scheduleNextVideoProgress(context, saveProgress, timestamp, checkpointIntervalMs);
+            return;
+        }
+
+        const response = await RestAPI.post({
+            url: `/quests/${quest.id}/video-progress`,
+            body: { timestamp }
+        });
+
+        if (!isQuestRunning(quest.id)) return;
+
+        lastSubmittedProgress = timestamp;
+
+        if (response.body?.completed_at || timestamp >= secondsNeeded) {
+            console.log("[Quest] Server confirmed video completion.");
+            completeQuest(context);
+            return;
+        }
+
+        console.log(`[Quest] Saved video progress at ${Math.floor(timestamp)}/${secondsNeeded}s.`);
+        scheduleNextVideoProgress(context, saveProgress, timestamp, checkpointIntervalMs);
+    };
+
+    scheduleNextVideoProgress(context, saveProgress, progressAtStart, checkpointIntervalMs);
+}
+
+async function completeDesktopQuest(context: QuestCompletionContext) {
+    const { quest, applicationId, applicationName, secondsNeeded, runningQuest } = context;
+    const RunningGameStore = findStoreLazy("RunningGameStore");
+    const res = await RestAPI.get({ url: `/applications/public?application_ids=${applicationId}` });
+
+    if (!isQuestRunning(quest.id)) return;
+
+    const appData = res.body[0];
+    if (!appData) throw new Error("Failed to load application data");
+
+    let exeName = applicationName.toLowerCase().replace(/\s+/g, "") + ".exe";
+    if (appData.executables && Array.isArray(appData.executables)) {
+        const executable = appData.executables.find(x => x.os === "win32");
+        if (executable?.name) exeName = executable.name.replace(">", "");
+    }
+
+    const pid = Math.floor(Math.random() * 30000) + 1000;
+    const parentPid1 = Math.floor(Math.random() * 30000) + 1000;
+    const parentPid2 = Math.floor(Math.random() * 30000) + 1000;
+    const parentPid3 = Math.floor(Math.random() * 30000) + 1000;
+
+    const fakeGame = {
+        cmdLine: "",
+        distributor: appData.distributor ?? "steam",
+        elevated: false,
+        exeName: exeName.toLowerCase(),
+        exePath: `c:/program files (x86)/steam/steamapps/common/${appData.name.toLowerCase()}/${exeName.toLowerCase()}`,
+        executableFingerprint: undefined,
+        fullscreenType: 1,
+        gameMetadata: undefined,
+        hidden: false,
+        id: applicationId,
+        isLauncher: false,
+        lastFocused: 0,
+        name: appData.name,
+        nativeProcessObserverId: Math.floor(Math.random() * 30000) + 1000,
+        origGameName: appData.name,
+        pid,
+        pidPath: [parentPid1, parentPid2, parentPid3, pid],
+        processName: appData.name,
+        sandboxed: false,
+        sku: appData.primary_sku_id ?? undefined,
+        start: Date.now(),
+        windowHandle: String(Math.floor(Math.random() * 9000000) + 1000000),
+    };
+
+    runningQuest.gameInstance = fakeGame;
+    runningQuest.cleanup = () => {
+        FluxDispatcher.dispatch({
+            type: FLUX_EVENTS.RUNNING_GAMES,
+            added: [],
+            removed: [fakeGame],
+            games: RunningGameStore.getRunningGames().filter(g => g.pid !== fakeGame.pid)
+        });
+    };
+
+    FluxDispatcher.dispatch({
+        type: FLUX_EVENTS.RUNNING_GAMES,
+        added: [fakeGame],
+        removed: [],
+        games: [...RunningGameStore.getRunningGames(), fakeGame]
+    });
+
+    const progressAtStart = getQuestProgress(quest, context.taskName);
+    const startTime = Date.now();
+
+    const getCurrentProgress = () => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return Math.max(
+            getLatestQuestProgress(context),
+            Math.min(progressAtStart + elapsed, secondsNeeded)
+        );
+    };
+
+    const sendHeartbeat = () => RestAPI.post({
+        url: `/quests/${quest.id}/heartbeat`,
+        body: {
+            stream_key: null,
+            terminal: false,
+            metadata: {
+                game: {
+                    name: appData.name,
+                    pid,
+                    start: fakeGame.start
+                }
+            }
+        }
+    });
+
+    await runHeartbeatQuest(context, sendHeartbeat, getCurrentProgress);
+}
+
+async function completeStreamQuest(context: QuestCompletionContext) {
+    const { quest, applicationId, currentStream, secondsNeeded, runningQuest } = context;
+    const pid = Math.floor(Math.random() * 30000) + 1000;
+    const realFunc = ApplicationStreamingStore.getStreamerActiveStreamMetadata;
+
+    ApplicationStreamingStore.getStreamerActiveStreamMetadata = () => ({
+        id: applicationId,
+        pid,
+        sourceName: null
+    });
+
+    runningQuest.cleanup = () => {
+        ApplicationStreamingStore.getStreamerActiveStreamMetadata = realFunc;
+    };
+
+    const progressAtStart = getQuestProgress(quest, context.taskName);
+    const startTime = Date.now();
+
+    const sendHeartbeat = () => RestAPI.post({
+        url: `/quests/${quest.id}/heartbeat`,
+        body: { stream_key: encodeStreamKey(currentStream), terminal: false }
+    });
+
+    const getCurrentProgress = () => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return Math.min(progressAtStart + elapsed, secondsNeeded);
+    };
+
+    await runHeartbeatQuest(context, sendHeartbeat, getCurrentProgress);
+}
+
+async function completeActivityQuest(context: QuestCompletionContext) {
+    const { quest, secondsNeeded } = context;
+    const questsHeartbeat = findByCode("QUESTS_HEARTBEAT");
+    const channelId = ChannelStore.getSortedPrivateChannels()[0]?.id ??
+        (Object.values(GuildChannelStore.getAllGuilds()) as any[])
+            .find(x => x?.VOCAL?.length > 0)?.VOCAL?.[0].channel?.id ?? null;
+
+    if (!channelId) throw new Error("No available voice channel or DM found for this quest");
+
+    const streamKey = `call:${channelId}:1`;
+    const progressAtStart = getQuestProgress(quest, context.taskName);
+    const startTime = Date.now();
+
+    const sendHeartbeat = () => questsHeartbeat({ questId: quest.id, streamKey, terminal: false });
+
+    const getCurrentProgress = () => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return Math.min(progressAtStart + elapsed, secondsNeeded);
+    };
+
+    await runHeartbeatQuest(context, sendHeartbeat, getCurrentProgress);
+}
+
+const questCompleters: Record<QuestTaskName, (context: QuestCompletionContext) => Promise<void> | void> = {
+    WATCH_VIDEO: completeVideoQuest,
+    WATCH_VIDEO_ON_MOBILE: completeVideoQuest,
+    PLAY_ON_DESKTOP: completeDesktopQuest,
+    STREAM_ON_DESKTOP: completeStreamQuest,
+    PLAY_ACTIVITY: completeActivityQuest
+};
+
+function QuestCompleterSettings() {
+    const quests = useRunningQuests();
+
+    return (
+        <>
+            {isApp ? (
+                <BaseText size="lg" weight="bold">
+                    The plugin should work properly because you are on the Desktop Client.
+                </BaseText>
+            ) : (
+                <BaseText size="lg" weight="bold" style={{ color: "var(--text-danger)" }}>
+                    Error: This plugin only works for non-video quests in the browser.
+                </BaseText>
+            )}
+            <div style={{ marginTop: "10px" }}>
+                <BaseText size="md" weight="bold">Currently running quests:</BaseText>
+                {quests.map(quest => (
+                    <div key={quest.questId} style={{ display: "flex", alignItems: "center", marginTop: "5px" }}>
+                        <Span size="md">{quest.questName} ({quest.taskName})</Span>
+                        <button
+                            onClick={() => stopQuest(quest.questId)}
+                            style={{ marginLeft: "10px", padding: "2px 5px" }}
+                        >
+                            Stop
+                        </button>
+                    </div>
+                ))}
+            </div>
+        </>
+    );
+}
+
 export default definePlugin({
     name: "QuestCompleter",
     description: "Auto complete quests without any requirements.",
     authors: [Devs.Loukious],
     patches: [
         {
-            find: "id:\"share-link\"",
+            find: 'id:"share-link"',
             replacement: {
-                match: /\(0,(\w{1,3})\.(\w{1,3})\)\((\w{1,3})\.(\w{1,3}),\{id:"share-link"[^}]+}}\)/,
-                replace: '$&, (0,$1.$2)($3.$4, { id: "Auto-complete", label: "Auto Complete", action: () => { $self.openCompleteQuest(e.quest.id); } })'
+                match: /questId:(\w+)\.quest\.id(.*?)(\(0,(\w{1,3})\.(\w{1,3})\)\((\w{1,3})\.(\w{1,3}),\{id:"share-link"[^}]+}\}[^)]*\))/,
+                replace: 'questId:$1.quest.id$2$3,(0,$4.$5)($6.$7,{id:"Auto-complete",label:"Auto Complete",action:()=>{$self.openCompleteQuest($1.quest.id);}})'
             }
         }
     ],
 
-    settingsAboutComponent() {
-        return (
-            <>
-                {isApp ? (
-                    <Text variant="text-lg/bold">
-                        The plugin should work properly because you are on the Desktop Client.
-                    </Text>
-                ) : (
-                    <Text variant="text-lg/bold" style={{ color: "red" }}>
-                        Error: This plugin only works for non-video quests in the browser.
-                    </Text>
-                )}
-                <div style={{ marginTop: "10px" }}>
-                    <Text variant="text-md/bold">Currently running quests:</Text>
-                    {Array.from(runningQuests.values()).map(quest => (
-                        <div key={quest.questId} style={{ display: "flex", alignItems: "center", marginTop: "5px" }}>
-                            <Text>{quest.questName} ({quest.taskName})</Text>
-                            <button
-                                onClick={() => stopQuest(quest.questId)}
-                                style={{ marginLeft: "10px", padding: "2px 5px" }}
-                            >
-                                Stop
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            </>
-        );
-    },
+    settingsAboutComponent: QuestCompleterSettings,
 
     start() { },
 
     stop() {
-        runningQuests.forEach(quest => {
-            if (quest.interval) clearInterval(quest.interval);
-            if (quest.cleanup) quest.cleanup();
-        });
-        runningQuests.clear();
+        for (const questId of Array.from(runningQuests.keys())) endQuest(questId);
     },
 
     async openCompleteQuest(questId: string) {
-        var quest = getQuestById(questId);
+        let quest = getQuestById(questId);
         if (!quest) {
             showToast("Quest not found!");
             return;
@@ -161,10 +546,7 @@ export default definePlugin({
             return;
         }
 
-        const currentStream = ApplicationStreamingStore.getCurrentUserActiveStream();
-        const taskName = ["WATCH_VIDEO", "PLAY_ON_DESKTOP", "STREAM_ON_DESKTOP", "PLAY_ACTIVITY", "WATCH_VIDEO_ON_MOBILE"].find(
-            x => quest.config.taskConfigV2.tasks[x] != null
-        );
+        const taskName = QUEST_TASKS.find(x => quest.config.taskConfigV2.tasks[x] != null);
 
         if (quest.userStatus?.completedAt) {
             showToast("This quest is already completed!");
@@ -199,12 +581,23 @@ export default definePlugin({
                 return;
             } else {
                 showToast("Successfully auto enrolled in the quest!");
-                await new Promise(r => setTimeout(r, 2000));
+                await sleep(2000);
                 quest = getQuestById(questId);
+                if (!quest) {
+                    showToast("Quest not found!");
+                    return;
+                }
             }
         }
 
+        const currentStream = ApplicationStreamingStore.getCurrentUserActiveStream();
+
         try {
+            if (taskName === "STREAM_ON_DESKTOP" && !isApp) {
+                showToast("Desktop app required for streaming quests!", Toasts.Type.FAILURE);
+                return;
+            }
+
             if (taskName === "STREAM_ON_DESKTOP") {
                 if (!currentStream) {
                     showToast("You need to be streaming to complete this quest!");
@@ -231,10 +624,6 @@ export default definePlugin({
         const applicationName = quest.config.application.name;
         const { questName } = quest.config.messages;
         const secondsNeeded = quest.config.taskConfigV2.tasks[taskName].target;
-        const secondsDone = quest.userStatus?.progress?.[taskName]?.value ?? 0;
-        const questsHeartbeat = findByCode("QUESTS_HEARTBEAT");
-        // const questsVideoProgress = findByCode("QUESTS_VIDEO_PROGRESS");
-        const RunningGameStore = findStoreLazy("RunningGameStore");
 
         const runningQuest: RunningQuest = {
             questId: quest.id,
@@ -243,6 +632,7 @@ export default definePlugin({
             taskName
         };
         runningQuests.set(quest.id, runningQuest);
+        emitRunningQuestsChange();
 
         const showQuestNotification = (title: string, body: string) => {
             showNotification({
@@ -252,267 +642,19 @@ export default definePlugin({
             });
         };
 
-        if (taskName === "WATCH_VIDEO" || taskName === "WATCH_VIDEO_ON_MOBILE") {
-            const STEP_SIZE = 7; // seconds advanced each tick
-            const GRACE_WINDOW = 10; // how far ahead the fake progress can be
-            const UPDATE_DELAY = 1; // seconds between each update
+        const context: QuestCompletionContext = {
+            quest,
+            currentStream,
+            runningQuest,
+            applicationId,
+            applicationName,
+            questName,
+            secondsNeeded,
+            taskName,
+            showQuestNotification
+        };
 
-            const startedAt = new Date(quest.userStatus?.enrolledAt ?? Date.now() - 15 * 1000).getTime();
-            let progress = quest.userStatus?.progress?.[taskName]?.value ?? 0;
-            const estimatedTime = Math.ceil((secondsNeeded - progress) / STEP_SIZE * UPDATE_DELAY);
-            let done = false;
-
-            console.log(`[Quest] Starting ${taskName}: ${questName} at ${progress}/${secondsNeeded}s`);
-            showToast(`Starting quest: ${questName}`, Toasts.Type.SUCCESS);
-
-            try {
-                while (progress < secondsNeeded && !done) {
-                    const elapsed = Math.floor((Date.now() - startedAt) / 1000);
-                    const maxReachable = elapsed + GRACE_WINDOW;
-
-                    if (maxReachable >= progress + STEP_SIZE) {
-                        try {
-                            const next = Math.min(secondsNeeded, progress + STEP_SIZE + Math.random());
-                            const res = await RestAPI.post({
-                                url: `/quests/${quest.id}/video-progress`,
-                                body: { timestamp: next }
-                            });
-
-                            progress = next;
-                            done = !!res.body?.completed_at;
-
-                            if (done) {
-                                console.log("[Quest] Server confirmed completion.");
-                                break;
-                            }
-                        } catch (err) {
-                            console.warn("[Quest] Failed to update video progress:", err);
-                            break;
-                        }
-                    }
-
-                    if (progress >= secondsNeeded) break;
-                    await new Promise(r => setTimeout(r, UPDATE_DELAY * 1000));
-                }
-                if (!done) {
-                    try {
-                        await RestAPI.post({
-                            url: `/quests/${quest.id}/video-progress`,
-                            body: { timestamp: secondsNeeded }
-                        });
-                        console.log("[Quest] Sent final completion timestamp.");
-                    } catch (err) {
-                        console.error("[Quest] Final sync failed:", err);
-                    }
-                }
-                runningQuests.delete(quest.id);
-                showQuestNotification("Completed", "Quest finished!");
-                console.log(`[Quest] ${questName} completed.`);
-
-            } catch (error) {
-                console.error("[Quest] Error:", error);
-                showToast(error instanceof Error ? error.message : "An unknown error occurred", Toasts.Type.FAILURE);
-                runningQuests.delete(quest.id);
-                clearInterval(runningQuest.interval);
-            }
-
-        } else if (taskName === "PLAY_ON_DESKTOP") {
-            if (!isApp) {
-                showToast("Desktop app required for gameplay quests!");
-                runningQuests.delete(quest.id);
-                return;
-            }
-
-            try {
-                const res = await RestAPI.get({ url: `/applications/public?application_ids=${applicationId}` });
-                const appData = res.body[0];
-                let exeName = applicationName.toLowerCase().replace(/\s+/g, "") + ".exe";
-                if (appData.executables && Array.isArray(appData.executables)) {
-                    const executable = appData.executables.find(x => x.os === "win32");
-                    if (executable && executable.name) {
-                        exeName = executable.name.replace(">", "");
-                    }
-                }
-                const pid = Math.floor(Math.random() * 30000) + 1000;
-                const parentPid1 = Math.floor(Math.random() * 30000) + 1000;
-                const parentPid2 = Math.floor(Math.random() * 30000) + 1000;
-                const parentPid3 = Math.floor(Math.random() * 30000) + 1000;
-
-                const fakeGame = {
-                    cmdLine: "",
-                    distributor: appData.distributor ?? "steam",
-                    elevated: false,
-                    exeName: exeName.toLowerCase(),
-                    exePath: `c:/program files (x86)/steam/steamapps/common/${appData.name.toLowerCase()}/${exeName.toLowerCase()}`,
-                    executableFingerprint: undefined,
-                    fullscreenType: 1,
-                    gameMetadata: undefined,
-                    hidden: false,
-                    id: applicationId,
-                    isLauncher: false,
-                    lastFocused: 0,
-                    name: appData.name,
-                    nativeProcessObserverId: Math.floor(Math.random() * 30000) + 1000,
-                    origGameName: appData.name,
-                    pid: pid,
-                    pidPath: [parentPid1, parentPid2, parentPid3, pid],
-                    processName: appData.name,
-                    sandboxed: false,
-                    sku: appData.primary_sku_id ?? undefined,
-                    start: Date.now(),
-                    windowHandle: String(Math.floor(Math.random() * 9000000) + 1000000),
-                };
-
-                runningQuest.gameInstance = fakeGame;
-
-                FluxDispatcher.dispatch({
-                    type: FLUX_EVENTS.RUNNING_GAMES,
-                    added: [fakeGame],
-                    removed: [],
-                    games: [...RunningGameStore.getRunningGames(), fakeGame]
-                });
-
-                const getCurrentProgress = () => {
-                    const currentQuest = getQuestById(quest.id);
-                    if (!currentQuest) return 0;
-
-                    return quest.config.configVersion === 1
-                        ? currentQuest.userStatus?.streamProgressSeconds || 0
-                        : currentQuest.userStatus?.progress?.[taskName]?.value || 0;
-                };
-
-                const sendHeartbeat = async () => {
-                    try {
-                        await RestAPI.post({
-                            url: `/quests/${quest.id}/heartbeat`,
-                            body: {
-                                stream_key: null,
-                                terminal: false,
-                                metadata: {
-                                    game: {
-                                        name: appData.name,
-                                        pid: pid,
-                                        start: fakeGame.start
-                                    }
-                                }
-                            }
-                        });
-                    } catch (e) {
-                        console.error("Heartbeat failed:", e);
-                    }
-                };
-
-                const updateProgress = async () => {
-                    await sendHeartbeat();
-                    const progress = getCurrentProgress();
-
-                    if (progress >= secondsNeeded) {
-                        clearInterval(runningQuest.progressInterval!);
-                        await sendHeartbeat();
-                        runningQuests.delete(quest.id);
-                        showQuestNotification("Completed", "Quest finished!");
-                    }
-                };
-
-                await updateProgress();
-
-                runningQuest.progressInterval = setInterval(updateProgress, 30000);
-
-                runningQuest.cleanup = () => {
-                    clearInterval(runningQuest.progressInterval!);
-                    FluxDispatcher.dispatch({
-                        type: FLUX_EVENTS.RUNNING_GAMES,
-                        added: [],
-                        removed: [fakeGame],
-                        games: RunningGameStore.getRunningGames().filter(g => g.pid !== fakeGame.pid)
-                    });
-                };
-
-            } catch (error) {
-                console.error("Game setup error:", error);
-                runningQuests.delete(quest.id);
-                showToast("Failed to setup game tracking", Toasts.Type.FAILURE);
-            }
-        } else if (taskName === "STREAM_ON_DESKTOP") {
-            if (!isApp) {
-                showToast("Desktop app required for streaming quests!", Toasts.Type.FAILURE);
-                runningQuests.delete(quest.id);
-                return;
-            }
-
-            const pid = Math.floor(Math.random() * 30000) + 1000;
-            const realFunc = ApplicationStreamingStore.getStreamerActiveStreamMetadata;
-            ApplicationStreamingStore.getStreamerActiveStreamMetadata = () => ({
-                id: applicationId,
-                pid,
-                sourceName: null
-            });
-
-            const startTime = Date.now();
-
-            runningQuest.progressInterval = setInterval(async () => {
-                if (!runningQuests.has(quest.id)) return;
-
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                const progress = Math.min(elapsed, secondsNeeded);
-
-                try {
-                    await RestAPI.post({
-                        url: `/quests/${quest.id}/heartbeat`,
-                        body: { stream_key: encodeStreamKey(currentStream), terminal: false }
-                    });
-
-                    if (progress >= secondsNeeded) {
-                        clearInterval(runningQuest.progressInterval!);
-                        runningQuests.delete(quest.id);
-                        showQuestNotification("Completed", "Quest finished!");
-                    }
-                } catch (e) {
-                    console.error("Stream progress error:", e);
-                    showToast("Failed to update stream progress", Toasts.Type.FAILURE);
-                    runningQuests.delete(quest.id);
-                }
-            }, 30000);
-
-            runningQuest.cleanup = () => {
-                clearInterval(runningQuest.progressInterval!);
-                ApplicationStreamingStore.getStreamerActiveStreamMetadata = realFunc;
-            };
-
-        } else if (taskName === "PLAY_ACTIVITY") {
-            const channelId = ChannelStore.getSortedPrivateChannels()[0]?.id ??
-                (Object.values(GuildChannelStore.getAllGuilds()) as any[])
-                    .find(x => x?.VOCAL?.length > 0)?.VOCAL?.[0].channel?.id ?? null;
-            const streamKey = `call:${channelId}:1`;
-
-            const startTime = Date.now();
-
-            runningQuest.progressInterval = setInterval(async () => {
-                if (!runningQuests.has(quest.id)) return;
-
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                const progress = Math.min(elapsed, secondsNeeded);
-
-                try {
-                    await questsHeartbeat({ questId: quest.id, streamKey, terminal: false });
-
-                    if (progress >= secondsNeeded) {
-                        clearInterval(runningQuest.progressInterval!);
-                        await questsHeartbeat({ questId: quest.id, stream_key: streamKey, terminal: true });
-                        runningQuests.delete(quest.id);
-                        showQuestNotification("Completed", "Quest finished!");
-                    }
-                } catch (error) {
-                    console.error("Activity progress error:", error);
-                    showToast("Failed to update activity progress", Toasts.Type.FAILURE);
-                    runningQuests.delete(quest.id);
-                }
-            }, 20000);
-
-            runningQuest.cleanup = () => {
-                clearInterval(runningQuest.progressInterval!);
-            };
-
-        }
+        showToast(`Starting quest: ${questName}`, Toasts.Type.SUCCESS);
+        void runQuestStep(context, () => questCompleters[taskName](context));
     }
 });
