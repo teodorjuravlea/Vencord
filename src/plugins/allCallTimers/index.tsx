@@ -12,7 +12,7 @@ import { useFixedTimer } from "@utils/react";
 import { formatDurationMs } from "@utils/text";
 import definePlugin, { OptionType } from "@utils/types";
 import { findCssClassesLazy } from "@webpack";
-import { FluxDispatcher, GuildStore, Tooltip, UserStore } from "@webpack/common";
+import { FluxDispatcher, GuildStore, Tooltip, useEffect, UserStore } from "@webpack/common";
 
 const containerClasses = findCssClassesLazy("container", "chipletParent");
 const voiceUserClasses = findCssClassesLazy("voiceUser", "content");
@@ -158,13 +158,30 @@ let runOneTime = true;
 
 function injectCSS() {
     if (document.getElementById("allCallTimers-css")) return;
+
+    let voiceUser: string;
+    let content: string;
+    let container: string;
+    let chipletParent: string;
+
+    try {
+        voiceUser = voiceUserClasses.voiceUser;
+        content = voiceUserClasses.content;
+        container = containerClasses.container;
+        chipletParent = containerClasses.chipletParent;
+    } catch {
+        // The relevant CSS module isn't loaded yet (e.g. not in a call).
+        // We'll retry when the timer component mounts.
+        return;
+    }
+
     const style = document.createElement("style");
     style.id = "allCallTimers-css";
     style.textContent = `
-        .${voiceUserClasses.voiceUser} .${containerClasses.container} .${containerClasses.chipletParent} {
+        .${voiceUser} .${container} .${chipletParent} {
             top: -5px;
         }
-        .${voiceUserClasses.voiceUser} .${voiceUserClasses.content} {
+        .${voiceUser} .${content} {
             padding: 0px var(--space-xs);
         }
     `;
@@ -301,9 +318,6 @@ export default definePlugin({
         if (settings.store.watchLargeGuilds) {
             this.subscribeToAllGuilds();
         }
-        if (settings.store.fixUI) {
-            injectCSS();
-        }
     },
 
     stop() {
@@ -339,6 +353,10 @@ export function Timer({ time, defaultStyle }: Readonly<{
     time: number;
     defaultStyle?: React.CSSProperties;
 }>) {
+    useEffect(() => {
+        if (settings.store.fixUI) injectCSS();
+    }, []);
+
     const durationMs = useFixedTimer({ initialTime: time });
     const formatted = formatDurationMs(durationMs, settings.store.format === "human", settings.store.showSeconds);
 
