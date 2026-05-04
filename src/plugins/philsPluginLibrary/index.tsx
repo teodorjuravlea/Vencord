@@ -29,8 +29,8 @@ const plugin = definePlugin({
         {
             find: '"--custom-app-panels-height",',
             replacement: {
-                match: /{}\)}\),/,
-                replace: "{})}),$self.replacedUserPanelComponent(),"
+                match: /(\(0,\s*\w+\.\w+\)\(\w+(?:\.\w+)?\s*,\s*\{\s*section:\s*\w+\.\w+\.ACCOUNT_PANEL\b)/,
+                replace: "$self.replacedUserPanelComponent(),$1"
             }
         },
         {
