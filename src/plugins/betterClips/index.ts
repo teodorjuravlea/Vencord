@@ -123,8 +123,8 @@ export default definePlugin({
         {
             find: "2026-03-clips-experiment",
             replacement: {
-                match: /defaultConfig:\{enableClips:!\d,ignorePlatformRestriction:!\d,showClipsHeaderEntrypoint:!\d,enableScreenshotKeybind:!\d,enableVoiceOnlyClips:!\d,enableAdvancedSignals:!\d\}/,
-                replace: "defaultConfig:{enableClips:!0,ignorePlatformRestriction:$self.settings.store.ignorePlatformRestriction,showClipsHeaderEntrypoint:!0,enableScreenshotKeybind:$self.settings.store.enableScreenshotKeybind,enableVoiceOnlyClips:$self.settings.store.enableVoiceOnlyClips,enableAdvancedSignals:$self.settings.store.enableAdvancedSignals}"
+                match: /defaultConfig:\s*\{\s*enableClips:\s*!\d\s*,\s*ignorePlatformRestriction:\s*!\d\s*,\s*enableScreenshotKeybind:\s*!\d\s*,\s*enableVoiceOnlyClips:\s*!\d\s*,\s*enableSpeakingIndicators:\s*!\d\s*,\s*enableAdvancedSignals:\s*!\d\s*,?\s*\}/,
+                replace: "defaultConfig:{enableClips:!0,ignorePlatformRestriction:$self.settings.store.ignorePlatformRestriction,enableScreenshotKeybind:$self.settings.store.enableScreenshotKeybind,enableVoiceOnlyClips:$self.settings.store.enableVoiceOnlyClips,enableSpeakingIndicators:$self.settings.store.enableAdvancedSignals,enableAdvancedSignals:$self.settings.store.enableAdvancedSignals}"
             }
         },
         {
