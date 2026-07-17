@@ -45,16 +45,6 @@ export const ExtraDonorBadges: Record<string, Array<Record<"tooltip" | "badge", 
         {
             tooltip: "Good boy",
             badge: "https://badges.vencord.dev/badges/712796708584554496/1-c5f3bdc6c15086dcfb385c5709d0296876a61947.gif"
-        },
-        {
-            tooltip: "Mashaallah",
-            badge: "https://badges.vencord.dev/badges/842091361310343169/5ea8a88c82704023215af6cdfe015266b851e1d9.webp"
-        }
-    ],
-    "407636388603756546": [
-        {
-            tooltip: "El No9ba",
-            badge: "https://badges.vencord.dev/badges/839204836637147177/4bf883d0537fdab857ef9b2f6fef556a2d959a72.gif"
         }
     ]
 };
@@ -207,10 +197,6 @@ export const Devs = /* #__PURE__*/ Object.freeze({
     kemo: {
         name: "kemo",
         id: 715746190813298788n
-    },
-    dzshn: {
-        name: "dzshn",
-        id: 310449948011528192n
     },
     Ducko: {
         name: "Ducko",
@@ -394,8 +380,8 @@ export const Devs = /* #__PURE__*/ Object.freeze({
         id: 354191516979429376n
     },
     Rini: {
-        name: "Rini",
-        id: 1079479184478441643n
+        name: "rini",
+        id: 0n
     },
     castdrian: {
         name: "castdrian",
@@ -559,7 +545,7 @@ export const Devs = /* #__PURE__*/ Object.freeze({
     },
     Byeoon: {
         name: "byeoon",
-        id: 1167275288036655133n
+        id: 495683688474869781n
     },
     Kaitlyn: {
         name: "kaitlyn",
@@ -722,6 +708,14 @@ export const Devs = /* #__PURE__*/ Object.freeze({
         name: "NightmareSan",
         id: 304239816466235392n
     },
+    angelcube: {
+        name: "angelcube",
+        id: 958505257288208446n
+    },
+    Lunascape: {
+        name: "Lunascape",
+        id: 383365021415243776n
+    }
 } satisfies Record<string, Dev>);
 
 // iife so #__PURE__ works correctly
