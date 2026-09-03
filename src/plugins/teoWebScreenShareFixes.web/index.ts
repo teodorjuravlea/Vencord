@@ -102,9 +102,9 @@ function buildCodecArray() {
   ];
 
   return codecMap
-    .filter((codec) => codec.enabled)
+    .filter(codec => codec.enabled)
     .sort((a, b) => a.priority - b.priority)
-    .map((codec) => codec.key);
+    .map(codec => codec.key);
 }
 
 export default definePlugin({
@@ -147,9 +147,9 @@ export default definePlugin({
       },
     ];
 
-    const filtered = codecMap.filter((codec) => codec.enabled);
+    const filtered = codecMap.filter(codec => codec.enabled);
     const sorted = filtered.sort((a, b) => a.priority - b.priority);
-    const result = sorted.map((codec) => {
+    const result = sorted.map(codec => {
       const value = codec.key === "AV1" ? "AV1" : codecEnum[codec.key];
       return value;
     });
