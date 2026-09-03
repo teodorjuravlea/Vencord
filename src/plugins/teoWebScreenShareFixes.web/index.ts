@@ -157,25 +157,24 @@ export default definePlugin({
   },
   patches: [
     {
-      find: "x-google-max-bitrate",
-      replacement: [
-        {
-          match: /"x-google-max-bitrate=".concat\(\i\)/,
-          replace: '"x-google-max-bitrate=".concat("80_000")',
+            find: "x-google-max-bitrate",
+            replacement: [
+                {
+                    match: /`x-google-max-bitrate=\$\{\i\}`/,
+                    replace: '"x-google-max-bitrate=80000"'
+                },
+                {
+                    match: /;usedtx=\$\{(\i)\?"0":"1"\}/,
+                    replace: '$&${$1?";stereo=1;sprop-stereo=1":""}'
+                },
+            ]
         },
         {
-          match: ";level-asymmetry-allowed=1",
-          replace: ";b=AS:800000;level-asymmetry-allowed=1",
-        },
-        {
-          match: /;usedtx=".concat\((\i)\?"0":"1"\)/,
-          replace: '$&.concat($1?";stereo=1;sprop-stereo=1":"")',
-        },
-        {
-          match: /\i\?\[(\i\.\i)\.H265,\i\.\i\.H264,\i\.\i\.VP8,\i\.\i\.VP9\]/,
-          replace: "true?$self.getCodecs($1)",
-        },
-      ],
-    },
+            find: "ApplicationStreamPreviewUploadManager",
+            replacement: {
+                match: /removeAttribute\("srcObject"\)(?<=(\i)\..+?)/,
+                replace: "pause(),$1.srcObject=null"
+            }
+        }
   ],
 });
