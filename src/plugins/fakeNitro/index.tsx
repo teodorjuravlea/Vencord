@@ -145,6 +145,12 @@ const settings = definePluginSettings({
         description: "Whether to disable the embed permission check when sending fake emojis and stickers",
         type: OptionType.BOOLEAN,
         default: false
+    },
+    enableSoundboardBypass: {
+        description: "Allows using soundboard sounds from all guilds anywhere (normally requires Nitro), and bypasses the \"Use Soundboard\"/\"Use External Sounds\" channel permissions so the soundboard works in any channel. Note: sounds from other guilds are only audible to you, not other people in the call",
+        type: OptionType.BOOLEAN,
+        default: true,
+        restartNeeded: true
     }
 });
 
@@ -225,6 +231,13 @@ export default definePlugin({
                 {
                     match: /(?<=canUsePremiumAppIcons:function\(\i\)\{)/,
                     replace: "return true;"
+                },
+                {
+                    // Unlocks the "use sounds everywhere" perk: makes the picker
+                    // include every joined guild's sounds and lets them be played
+                    match: /(?<=canUseSoundboardEverywhere:function\(\i\)\{)/,
+                    replace: "return true;",
+                    predicate: () => settings.store.enableSoundboardBypass
                 }
             ],
         },
@@ -415,6 +428,34 @@ export default definePlugin({
                 match: /(?<=type:"(?:SOUNDBOARD_SOUNDS_RECEIVED|GUILD_SOUNDBOARD_SOUND_CREATE|GUILD_SOUNDBOARD_SOUND_UPDATE|GUILD_SOUNDBOARD_SOUNDS_UPDATE)".+?available:)\i\.available/g,
                 replace: "true"
             }
+        },
+        // Remove the Nitro lock from other guilds' sounds in the soundboard picker.
+        // The picker marks sections from other guilds with isNitroLocked based on
+        // a separate isPremium(TIER_2) check, which would leave them locked (upsell
+        // on click) even with canUseSoundboardEverywhere patched above
+        {
+            find: "soundboard_guild_",
+            predicate: () => settings.store.enableSoundboardBypass,
+            replacement: {
+                match: /\i\.\i\.isPremium\(\i,\i\.PremiumTypes\.TIER_2\)/,
+                replace: "!0"
+            }
+        },
+        // Bypass the soundboard channel permissions. Every soundboard permission
+        // check — the "Use External Sounds" gates (picker guild list, play
+        // validation, soundmoji picker) and the "Use Soundboard" gate that hides
+        // the open-soundboard button — goes through PermissionStore.can, so a
+        // single targeted check there covers all call sites. Both bits gate
+        // nothing but the soundboard, so other permission checks are unaffected
+        {
+            find: 'displayName="PermissionStore"',
+            predicate: () => settings.store.enableSoundboardBypass,
+            replacement: {
+                // can(permission, context, ...) — return true when the queried
+                // permission is exactly one of the soundboard bits
+                match: /(?<=can\((\i),\i,\i,\i,\i\)\{)/,
+                replace: (_, perm) => `if(${perm}==$self.useExternalSoundsBit||${perm}==$self.useSoundboardBit)return!0;`
+            }
         }
     ],
 
@@ -424,6 +465,16 @@ export default definePlugin({
 
     get canUseEmotes() {
         return (UserStore.getCurrentUser().premiumType ?? 0) > 0;
+    },
+
+    // Exposed for the soundboard permission bypass patch above; using the
+    // client's own bits avoids hardcoding raw values in the patch
+    get useExternalSoundsBit() {
+        return PermissionsBits.USE_EXTERNAL_SOUNDS;
+    },
+
+    get useSoundboardBit() {
+        return PermissionsBits.USE_SOUNDBOARD;
     },
 
     get canUseStickers() {
