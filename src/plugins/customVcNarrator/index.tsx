@@ -21,8 +21,10 @@ import { Logger } from "@utils/Logger";
 import { Margins } from "@utils/margins";
 import { wordsToTitle } from "@utils/text";
 import definePlugin, { PluginNative, ReporterTestable } from "@utils/types";
-import { Button, ChannelStore, Forms, GuildMemberStore, SelectedChannelStore, SelectedGuildStore, useMemo, UserStore, VoiceStateStore } from "@webpack/common";
-
+import { ChannelStore, GuildMemberStore, SelectedChannelStore, SelectedGuildStore, useMemo, UserStore, VoiceStateStore } from "@webpack/common";
+import { Button } from "@components/Button";
+import { Text } from "@components/Text";
+import { Heading } from "@components/Heading";
 import { getCurrentVoice, settings } from "./settings";
 
 const Native = VencordNative.pluginHelpers.CustomVcNarrator as PluginNative<typeof import("./native")>;
@@ -244,14 +246,14 @@ export default definePlugin({
 
         return (
             <section>
-                <Forms.FormText>
+                <Text>
                     You can customise the spoken messages below. You can disable specific messages by setting them to nothing
-                </Forms.FormText>
-                <Forms.FormText>
+                </Text>
+                <Text>
                     The special placeholders <code>{"{{USER}}"}</code>, <code>{"{{DISPLAY_NAME}}"}</code>, <code>{"{{NICKNAME}}"}</code> and <code>{"{{CHANNEL}}"}</code>{" "}
                     will be replaced with the user's name (nothing if it's yourself), the user's display name, the user's nickname on current server and the channel's name respectively
-                </Forms.FormText>
-                <Forms.FormTitle className={Margins.top20} tag="h3">Play Example Sounds</Forms.FormTitle>
+                </Text>
+                <Heading className={Margins.top20} tag="h3">Play Example Sounds</Heading>
                 <div
                     style={{
                         display: "grid",

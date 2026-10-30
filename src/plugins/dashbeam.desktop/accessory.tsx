@@ -7,7 +7,8 @@
 import { formatBytes } from "@plugins/dashbeam.desktop/progressCard";
 import { acceptTicket, DASHBEAM_TICKET_REGEX, dismissedTickets, fetchMetadata, FileMetadata, getMetadataCache, isMyMessage, lastSentShares, openOutboundCard, RECEIVE_LINK_BASE, setClaimedSizeForInbound, stopShare, subscribe } from "@plugins/dashbeam.desktop/shareState";
 import { Message } from "@vencord/discord-types";
-import { Button, useEffect, useState } from "@webpack/common";
+import { useEffect, useState } from "@webpack/common";
+import { Button } from "@components/Button";
 
 // Registered in start() via addMessageAccessory. Runs for EVERY message, so
 // the regex test is the first statement and everything else is behind it

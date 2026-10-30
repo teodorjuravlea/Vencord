@@ -6,9 +6,11 @@
 
 import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
+import { Heading } from "@components/Heading";
+import { Text } from "@components/Text";
 import { openSoundBoardLog } from "@plugins/soundBoardLogger/components/SoundBoardLog";
 import { OptionType } from "@utils/types";
-import { Forms, TextInput, useState } from "@webpack/common";
+import { TextInput, useState } from "@webpack/common";
 
 const settings = definePluginSettings({
     SavedIds: {
@@ -50,7 +52,7 @@ const settings = definePluginSettings({
 
             return (
                 <section>
-                    <Forms.FormTitle>The amount of soundboard ids you want to save at a time (0 lets you save infinite)</Forms.FormTitle>
+                    <Heading>The amount of soundboard ids you want to save at a time (0 lets you save infinite)</Heading>
                     <TextInput
                         type="number"
                         pattern="-?[0-9]+"
@@ -58,8 +60,8 @@ const settings = definePluginSettings({
                         onChange={handleChange}
                         placeholder={"Enter a number"}
                     />
-                    {shouldShowWarning && <Forms.FormText style={{ color: "var(--text-danger)" }}>Warning! Setting the number to a lower value will reset the log!</Forms.FormText>}
-                    {errorMessage && <Forms.FormText style={{ color: "var(--text-danger)" }}>{errorMessage}</Forms.FormText>}
+                    {shouldShowWarning && <Text style={{ color: "var(--text-danger)" }}>Warning! Setting the number to a lower value will reset the log!</Text>}
+                    {errorMessage && <Text style={{ color: "var(--text-danger)" }}>{errorMessage}</Text>}
                 </section>
             );
         }
