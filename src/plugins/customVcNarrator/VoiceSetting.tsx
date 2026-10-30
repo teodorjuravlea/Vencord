@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { Heading } from "@components/Heading";
+import { Text } from "@components/Text";
 import { SearchableSelect, useMemo, useState } from "@webpack/common";
 
 import { getCurrentVoice, settings, TIKTOK_VOICES } from "./settings";
-import { Heading } from "@components/Heading";
-import { Text } from "@components/Text";
 
 // Group TikTok voices by language
 function groupBy<T extends object, K extends PropertyKey>(arr: T[], fn: (obj: T) => K) {

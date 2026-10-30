@@ -16,15 +16,16 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import { Button } from "@components/Button";
+import { Heading } from "@components/Heading";
+import { Text } from "@components/Text";
 import { Devs } from "@utils/constants";
 import { Logger } from "@utils/Logger";
 import { Margins } from "@utils/margins";
 import { wordsToTitle } from "@utils/text";
 import definePlugin, { PluginNative, ReporterTestable } from "@utils/types";
 import { ChannelStore, GuildMemberStore, SelectedChannelStore, SelectedGuildStore, useMemo, UserStore, VoiceStateStore } from "@webpack/common";
-import { Button } from "@components/Button";
-import { Text } from "@components/Text";
-import { Heading } from "@components/Heading";
+
 import { getCurrentVoice, settings } from "./settings";
 
 const Native = VencordNative.pluginHelpers.CustomVcNarrator as PluginNative<typeof import("./native")>;

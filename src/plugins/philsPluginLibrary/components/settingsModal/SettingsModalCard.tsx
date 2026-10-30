@@ -17,8 +17,8 @@
 */
 
 import { Card } from "@components/Card";
-import { Switch } from "@components/Switch";
 import { Heading } from "@components/Heading";
+import { Switch } from "@components/Switch";
 import React from "react";
 
 export interface SettingsModalItemProps extends Pick<React.ComponentProps<"div">,

@@ -165,12 +165,12 @@ export default function VoicePatcherSettings() {
                                 settings.store.customPatches || "[]"
                             ).then(result => {
                                 if (result.error) {
-                                    showToast("Failed: " + result.error, "failure");
+                                    showToast({ text: "Failed: " + result.error, variant: "critical" });
                                 } else {
-                                    showToast("Patch state reconciled successfully.", "success");
+                                    showToast({ text: "Patch state reconciled successfully.", variant: "success" });
                                 }
                             }).catch(e => {
-                                showToast("Exception: " + String(e), "failure");
+                                showToast({ text: "Exception: " + String(e), variant: "critical" });
                             });
                         }}
                     >
@@ -182,15 +182,12 @@ export default function VoicePatcherSettings() {
                         onClick={() => {
                             revertAndLogPatches().then(result => {
                                 if (result.error || (result.failed ?? 0) > 0) {
-                                    showToast(
-                                        result.error ? "Failed: " + result.error : `Failed to revert ${result.failed} patch(es).`,
-                                        "failure"
-                                    );
+                                    showToast({ text: result.error ? "Failed: " + result.error : `Failed to revert ${result.failed} patch(es).`, variant: "critical" });
                                 } else {
-                                    showToast("All tracked patches reverted.", "success");
+                                    showToast({ text: "All tracked patches reverted.", variant: "success" });
                                 }
                             }).catch(e => {
-                                showToast("Exception: " + String(e), "failure");
+                                showToast({ text: "Exception: " + String(e), variant: "critical" });
                             });
                         }}
                     >

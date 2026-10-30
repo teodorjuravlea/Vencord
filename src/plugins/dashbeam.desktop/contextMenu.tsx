@@ -24,7 +24,7 @@ function triggerDashBeamShare() {
                 await shareFile(file, SelectedChannelStore.getChannelId());
             }
         } else {
-            showToast("No file selected");
+            showToast({ text: "No file selected" });
         }
     };
 

@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { BaseText } from "@components/BaseText";
 import { Flex } from "@components/Flex";
 import { Heading } from "@components/Heading";
 import { CopyIcon } from "@components/Icons";
+import { Text } from "@components/Text";
 import { DownloadIcon, IconWithTooltip, PlayIcon } from "@plugins/soundBoardLogger/components/Icons";
 import { AvatarStyles, cl, downloadAudio, getEmojiUrl, getSoundName, playSound, SoundLogEntry, User } from "@plugins/soundBoardLogger/utils";
 import { copyWithToast, openUserProfile } from "@utils/discord";
@@ -52,9 +52,9 @@ export default function UserModal({ item, user, sounds, modalProps }: { item: So
                         alt=""
                     />
                     <Flex flexDirection="column" style={{ gap: "7px", height: "68px", justifyContent: "space-between" }}>
-                        <BaseText weight="bold" style={{ height: "20px" }}>{getSoundName(item.soundId)}</BaseText>
-                        <BaseText>Played {currentUser.plays.length} {currentUser.plays.length === 1 ? "time" : "times"}.</BaseText>
-                        <BaseText>Last played: <Timestamp timestamp={new Date(moment(currentUser.plays.at(-1)).toDate())} /></BaseText>
+                        <Text weight="bold" style={{ height: "20px" }}>{getSoundName(item.soundId)}</Text>
+                        <Text>Played {currentUser.plays.length} {currentUser.plays.length === 1 ? "time" : "times"}.</Text>
+                        <Text>Last played: <Timestamp timestamp={new Date(moment(currentUser.plays.at(-1)).toDate())} /></Text>
                     </Flex>
                 </Flex>
                 <Heading tag="h2" className={classes(Margins.top16, Margins.bottom8)}>

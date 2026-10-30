@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { BaseText } from "@components/BaseText";
 import { Span } from "@components/Span";
+import { Text } from "@components/Text";
 import { isApp } from "@plugins/questCompleter/constants";
 import { stopQuest, useRunningQuests } from "@plugins/questCompleter/state";
 
@@ -27,16 +27,16 @@ export function QuestCompleterSettings() {
     return (
         <>
             {isApp ? (
-                <BaseText size="lg" weight="bold">
+                <Text size="lg" weight="bold">
                     The plugin should work properly because you are on the Desktop Client.
-                </BaseText>
+                </Text>
             ) : (
-                <BaseText size="lg" weight="bold" style={{ color: "var(--text-danger)" }}>
+                <Text size="lg" weight="bold" style={{ color: "var(--text-danger)" }}>
                     Error: This plugin only works for non-video quests in the browser.
-                </BaseText>
+                </Text>
             )}
             <div style={{ marginTop: "10px" }}>
-                <BaseText size="md" weight="bold">Currently running quests:</BaseText>
+                <Text size="md" weight="bold">Currently running quests:</Text>
                 {quests.map(quest => (
                     <div key={quest.questId} style={{ display: "flex", alignItems: "center", marginTop: "5px" }}>
                         <Span size="md">{quest.questName} ({quest.taskName})</Span>

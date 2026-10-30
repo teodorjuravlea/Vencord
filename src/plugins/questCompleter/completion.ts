@@ -38,7 +38,7 @@ export function failQuest(context: QuestCompletionContext, error: unknown) {
     if (!endQuest(context.quest.id)) return;
 
     console.error(`[Quest] ${context.taskName} failed:`, error);
-    showToast(getQuestErrorMessage(context, error), "failure");
+    showToast({ text: getQuestErrorMessage(context, error), variant: "critical" });
 }
 
 export async function runQuestStep(context: QuestCompletionContext, step: () => Promise<void> | void) {
