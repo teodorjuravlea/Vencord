@@ -4,10 +4,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { Button } from "@components/Button";
 import { formatBytes } from "@plugins/dashbeam.desktop/progressCard";
 import { acceptTicket, DASHBEAM_TICKET_REGEX, dismissedTickets, fetchMetadata, FileMetadata, getMetadataCache, isMyMessage, lastSentShares, openOutboundCard, RECEIVE_LINK_BASE, setClaimedSizeForInbound, stopShare, subscribe } from "@plugins/dashbeam.desktop/shareState";
 import { Message } from "@vencord/discord-types";
-import { Button, useEffect, useState } from "@webpack/common";
+import { useEffect, useState } from "@webpack/common";
 
 // Registered in start() via addMessageAccessory. Runs for EVERY message, so
 // the regex test is the first statement and everything else is behind it
@@ -141,16 +142,16 @@ function DashBeamCard({ ticket, message }: { ticket: string; message: Message; }
 
             <div className="db-embed-buttons">
                 <Button
-                    color={Button.Colors.LINK}
-                    size={Button.Sizes.SMALL}
+                    variant="link"
+                    size="small"
                     onClick={handleOpenInBrowser}
                 >
                     Open in browser
                 </Button>
                 {mine ? (
                     <Button
-                        color={Button.Colors.RED}
-                        size={Button.Sizes.SMALL}
+                        variant="dangerPrimary"
+                        size="small"
                         onClick={() => { stopShare(); setStatusLine("Share stopped"); }}
                     >
                         Stop Sharing
@@ -158,16 +159,16 @@ function DashBeamCard({ ticket, message }: { ticket: string; message: Message; }
                 ) : (status === "ready" || status === "loading") && (
                     <>
                         <Button
-                            color={Button.Colors.PRIMARY}
-                            size={Button.Sizes.SMALL}
+                            variant="primary"
+                            size="small"
                             disabled={status === "loading"}
                             onClick={handleAccept}
                         >
                             Accept
                         </Button>
                         <Button
-                            color={Button.Colors.TRANSPARENT}
-                            size={Button.Sizes.SMALL}
+                            variant="none"
+                            size="small"
                             onClick={handleDecline}
                         >
                             Decline

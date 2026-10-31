@@ -41,7 +41,7 @@ function triggerFileUpload() {
                 const channelId = SelectedChannelStore.getChannelId();
                 await uploadFile(file, channelId);
             } else {
-                showToast("No file selected");
+                showToast({ text: "No file selected" });
             }
         }
     };

@@ -67,7 +67,7 @@ function checkClaimedSizeMismatch(actualTotal: number) {
     if (claimedSizeForInbound == null || sizeMismatchWarned || actualTotal <= 0) return;
     if (actualTotal > claimedSizeForInbound * 1.25 + 65536) {
         sizeMismatchWarned = true;
-        showToast(`File is actually ${formatBytes(actualTotal)} — the claimed size was ${formatBytes(claimedSizeForInbound)}. Cancel if this wasn't expected.`, "failure");
+        showToast({ text: `File is actually ${formatBytes(actualTotal)} — the claimed size was ${formatBytes(claimedSizeForInbound)}. Cancel if this wasn't expected.`, variant: "critical" });
     }
 }
 
@@ -110,12 +110,12 @@ function routeEvent(eventName: string, payload?: string) {
         case "transfer-completed":
             outboundCard?.close();
             outboundCard = null;
-            showToast("DashBeam transfer completed", "success");
+            showToast({ text: "DashBeam transfer completed", variant: "success" });
             break;
         case "transfer-failed":
             outboundCard?.close();
             outboundCard = null;
-            showToast("DashBeam transfer failed", "failure");
+            showToast({ text: "DashBeam transfer failed", variant: "critical" });
             break;
         case "receive-completed":
             // receiveFile's own resolution closes the card — this is just a
@@ -148,12 +148,12 @@ export function ensureWasm() {
 // would silently kill the first ticket
 export async function shareFile(file: File, channelId: string) {
     if (activeShare) {
-        showToast(`Already sharing "${activeShare.fileName}" — stop it first (Stop button on its card)`, "failure");
+        showToast({ text: `Already sharing "${activeShare.fileName}" — stop it first (Stop button on its card)`, variant: "critical" });
         return;
     }
 
     try {
-        showToast("Starting DashBeam share…");
+        showToast({ text: "Starting DashBeam share…" });
         await ensureWasm();
 
         const bytes = new Uint8Array(await file.arrayBuffer());
@@ -172,10 +172,10 @@ export async function shareFile(file: File, channelId: string) {
         // users and browser users alike) — the embed card replaces it
         const link = `<${RECEIVE_LINK_BASE}?ticket=${encodeURIComponent(result.ticket)}>`;
         await sendMessage(channelId, { content: link });
-        showToast(`Sharing "${file.name}" — link sent`, "success");
+        showToast({ text: `Sharing "${file.name}" — link sent`, variant: "success" });
     } catch (error) {
         console.error("[DashBeam] send failed:", error);
-        showToast(`DashBeam send failed: ${error instanceof Error ? error.message : String(error)}`, "failure");
+        showToast({ text: `DashBeam send failed: ${error instanceof Error ? error.message : String(error)}`, variant: "critical" });
     }
 }
 
@@ -213,7 +213,7 @@ export async function acceptTicket(ticket: string): Promise<AcceptResult> {
 
         inboundCard.close();
         inboundCard = null;
-        showToast(`Received ${files.length} file(s) via DashBeam`, "success");
+        showToast({ text: `Received ${files.length} file(s) via DashBeam`, variant: "success" });
         return { kind: "success", files, bytesList };
     } catch (error) {
         console.error("[DashBeam] receive failed:", error);
@@ -222,10 +222,10 @@ export async function acceptTicket(ticket: string): Promise<AcceptResult> {
         inboundCard?.close();
         inboundCard = null;
         if (cancelled) {
-            showToast("Download cancelled");
+            showToast({ text: "Download cancelled" });
             return { kind: "cancelled" };
         }
-        showToast(`DashBeam receive failed: ${message}`, "failure");
+        showToast({ text: `DashBeam receive failed: ${message}`, variant: "critical" });
         return { kind: "failed" };
     }
 }

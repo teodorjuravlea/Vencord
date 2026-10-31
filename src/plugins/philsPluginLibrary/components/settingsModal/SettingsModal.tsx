@@ -16,8 +16,8 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { BaseText } from "@components/BaseText";
 import { Flex } from "@components/Flex";
+import { Text } from "@components/Text";
 import { ContributorAuthorSummary } from "@plugins/philsPluginLibrary/components/ContributorAuthorSummary";
 import { Author, Contributor } from "@plugins/philsPluginLibrary/types";
 import { ModalProps } from "@vencord/discord-types";
@@ -68,7 +68,7 @@ export const SettingsModal = (props: SettingsModalProps) => {
             {...modalProps}
             onClose={onClose}
             size={normalizeModalSize(size)}
-            title={title && <BaseText size="lg" weight="semibold">{title}</BaseText>}
+            title={title && <Text size="lg" weight="semibold">{title}</Text>}
             actionBarInput={
                 <Flex style={{ width: "100%", justifyContent: "flex-start", alignItems: "center", gap: "1em" }}>
                     {(author || contributors && contributors.length > 0) && (

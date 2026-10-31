@@ -152,10 +152,10 @@ function SettingsComponent(props: { setValue(v: any): void; }) {
                     setFileUploader("Custom");
                     updateSetting("fileUploader", "Custom");
 
-                    showToast("ShareX config imported successfully!");
+                    showToast({ text: "ShareX config imported successfully!" });
                 } catch (error) {
                     console.error("Error parsing ShareX config:", error);
-                    showToast("Error importing ShareX config. Check console for details.");
+                    showToast({ text: "Error importing ShareX config. Check console for details." });
                 }
             };
             reader.readAsText(file);
@@ -167,15 +167,15 @@ function SettingsComponent(props: { setValue(v: any): void; }) {
     const validateCustomUploaderSettings = () => {
         if (fileUploader === "Custom") {
             if (!settings.store.customUploaderRequestURL) {
-                showToast("Custom uploader request URL is required.");
+                showToast({ text: "Custom uploader request URL is required." });
                 return false;
             }
             if (!settings.store.customUploaderFileFormName) {
-                showToast("Custom uploader file form name is required.");
+                showToast({ text: "Custom uploader file form name is required." });
                 return false;
             }
             if (!settings.store.customUploaderURL) {
-                showToast("Custom uploader URL (JSON path) is required.");
+                showToast({ text: "Custom uploader URL (JSON path) is required." });
                 return false;
             }
         }

@@ -4,10 +4,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { BaseText } from "@components/BaseText";
 import { Flex } from "@components/Flex";
 import { HeadingTertiary } from "@components/Heading";
 import { Paragraph } from "@components/Paragraph";
+import { Text } from "@components/Text";
 import { cl, getEmojiUrl, getSoundName, SoundEvent } from "@plugins/soundBoardLogger/utils";
 import { Margins } from "@utils/margins";
 import { classes } from "@utils/misc";
@@ -30,7 +30,7 @@ const getFontSize = (s: string, small: boolean = false) => {
 function GuildAcronym({ acronym, small, style = {} }) {
     return (
         <Flex style={{ alignItems: "center", justifyContent: "center", overflow: "hidden", fontSize: getFontSize(acronym, small), ...style }}>
-            <BaseText>{acronym}</BaseText>
+            <Text>{acronym}</Text>
         </Flex>
     );
 }
@@ -78,13 +78,13 @@ export function CloneSoundModal({ item, modalProps }: { item: SoundEvent, modalP
         fetch(`https://cdn.discordapp.com/soundboard-sounds/${item.soundId}`).then(function (response) {
             if (!response.body) {
                 setLoadingButton(false);
-                showToast("Error fetching the sound", "failure");
+                showToast({ text: "Error fetching the sound", variant: "critical" });
                 return;
             }
             response.body.getReader().read().then(function (result) {
                 if (!result.value) {
                     setLoadingButton(false);
-                    showToast("Error reading the sound content", "failure");
+                    showToast({ text: "Error reading the sound content", variant: "critical" });
                     return;
                 }
                 return btoa(String.fromCharCode(...result.value));
@@ -97,17 +97,17 @@ export function CloneSoundModal({ item, modalProps }: { item: SoundEvent, modalP
                     ...(soundEmoji.id ? { emojiId: soundEmoji.id } : { emojiName: soundEmoji.surrogates }),
                     volume: 1
                 }).then(() => {
-                    showToast(`Sound added to ${selectedGuild?.name}`, "success");
+                    showToast({ text: `Sound added to ${selectedGuild?.name}`, variant: "success" });
                     modalProps.onClose();
                 }).catch(() => {
                     setLoadingButton(false);
-                    showToast("Error while adding sound", "failure");
+                    showToast({ text: "Error while adding sound", variant: "critical" });
                 });
 
             });
         }).catch(() => {
             setLoadingButton(false);
-            showToast("Error fetching the sound", "failure");
+            showToast({ text: "Error fetching the sound", variant: "critical" });
         });
     }
 
@@ -126,7 +126,7 @@ export function CloneSoundModal({ item, modalProps }: { item: SoundEvent, modalP
             <HeadingTertiary className={Margins.top16}>Cloning Sound</HeadingTertiary>
             <CustomInput style={{ display: "flex", flexDirection: "row", gap: "10px", alignItems: "center" }} className={Margins.bottom16}>
                 <img src={getEmojiUrl(item.emoji)} width="24" height="24" />
-                <BaseText>{getSoundName(item.soundId)}</BaseText>
+                <Text>{getSoundName(item.soundId)}</Text>
             </CustomInput>
             <HeadingTertiary aria-required="true">Add to server:</HeadingTertiary>
             <SearchableSelect
@@ -175,11 +175,11 @@ export function CloneSoundModal({ item, modalProps }: { item: SoundEvent, modalP
                                         {soundEmoji ?
                                             <>
                                                 <img src={getEmojiUrl({ name: soundEmoji.surrogates, id: soundEmoji.id })} width="24" height="24" style={{ cursor: "pointer" }} />
-                                                <BaseText style={{ color: "var(--text-muted)", cursor: "pointer" }}>:{soundEmoji.name ? soundEmoji.name.split("~")[0] : soundEmoji.uniqueName}:</BaseText>
+                                                <Text style={{ color: "var(--text-muted)", cursor: "pointer" }}>:{soundEmoji.name ? soundEmoji.name.split("~")[0] : soundEmoji.uniqueName}:</Text>
                                             </> :
                                             <>
                                                 <img src={getEmojiUrl({ name: "😊" })} width="24" height="24" style={{ filter: "grayscale(100%)", cursor: "pointer" }} />
-                                                <BaseText style={{ color: "var(--text-muted)", cursor: "pointer" }}>Click to Select</BaseText>
+                                                <Text style={{ color: "var(--text-muted)", cursor: "pointer" }}>Click to Select</Text>
                                             </>
                                         }
                                     </CustomInput>

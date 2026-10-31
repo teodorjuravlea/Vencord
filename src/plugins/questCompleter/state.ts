@@ -106,5 +106,5 @@ export function stopQuest(questId: string) {
     const questData = endQuest(questId);
     if (!questData) return;
 
-    showToast(`Stopped quest: ${questData.questName}`);
+    showToast({ text: `Stopped quest: ${questData.questName}` });
 }

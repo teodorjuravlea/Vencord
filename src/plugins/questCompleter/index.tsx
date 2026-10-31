@@ -79,7 +79,7 @@ export default definePlugin({
     async openCompleteQuest(questId: string) {
         let quest = getQuestById(questId);
         if (!quest) {
-            showToast("Quest not found!");
+            showToast({ text: "Quest not found!" });
             return;
         }
 
@@ -92,22 +92,22 @@ export default definePlugin({
         const taskName = QUEST_TASKS.find(x => quest.config.taskConfigV2.tasks[x] != null);
 
         if (quest.userStatus?.completedAt) {
-            showToast("This quest is already completed!");
+            showToast({ text: "This quest is already completed!" });
             return;
         }
 
         if (new Date(quest.config.expiresAt).getTime() < Date.now()) {
-            showToast("This quest has expired!");
+            showToast({ text: "This quest has expired!" });
             return;
         }
 
         if (!taskName) {
-            showToast("Unsupported quest type!");
+            showToast({ text: "Unsupported quest type!" });
             return;
         }
 
         if (!quest.userStatus?.enrolledAt) {
-            showToast("Attempting to enroll in quest...");
+            showToast({ text: "Attempting to enroll in quest..." });
             // Discord's own enroll action, so the QUESTS_ENROLL_SUCCESS dispatch
             // puts enrolledAt into the quest store — the official heartbeat
             // scheduler requires it before beating for a quest.
@@ -122,19 +122,19 @@ export default definePlugin({
             }
             if (result?.type !== "success") {
                 if (result?.type === "captcha_failed") {
-                    showToast("Enrollment requires a captcha. Please enroll manually!");
+                    showToast({ text: "Enrollment requires a captcha. Please enroll manually!" });
                 } else if (taskName === "WATCH_VIDEO" || taskName === "WATCH_VIDEO_ON_MOBILE") {
-                    showToast("You need to start playing the video first, then pause it or accept the quest!");
+                    showToast({ text: "You need to start playing the video first, then pause it or accept the quest!" });
                 } else {
-                    showToast("Failed to auto enroll in the quest. Please try manually.");
+                    showToast({ text: "Failed to auto enroll in the quest. Please try manually." });
                 }
                 return;
             } else {
-                showToast("Successfully auto enrolled in the quest!");
+                showToast({ text: "Successfully auto enrolled in the quest!" });
                 await sleep(2000);
                 quest = getQuestById(questId);
                 if (!quest) {
-                    showToast("Quest not found!");
+                    showToast({ text: "Quest not found!" });
                     return;
                 }
             }
@@ -144,30 +144,30 @@ export default definePlugin({
 
         try {
             if (taskName === "STREAM_ON_DESKTOP" && !isApp) {
-                showToast("Desktop app required for streaming quests!", "failure");
+                showToast({ text: "Desktop app required for streaming quests!", variant: "critical" });
                 return;
             }
 
             if (taskName === "STREAM_ON_DESKTOP") {
                 if (!currentStream) {
-                    showToast("You need to be streaming to complete this quest!");
+                    showToast({ text: "You need to be streaming to complete this quest!" });
                     return;
                 }
 
                 // Official gate: the scheduler only beats while at least one
                 // other user is in the voice channel
                 if ((VoiceStateStore as any).countVoiceStatesForChannel(currentStream.channelId) < 2) {
-                    showToast("You need at least one other user in your voice channel!");
+                    showToast({ text: "You need at least one other user in your voice channel!" });
                     return;
                 }
             }
 
             if (taskName === "PLAY_ON_DESKTOP" && !isApp) {
-                showToast("Desktop app required for gameplay quests!");
+                showToast({ text: "Desktop app required for gameplay quests!" });
                 return;
             }
         } catch (error) {
-            showToast(error instanceof Error ? error.message : "An unknown error occurred");
+            showToast({ text: error instanceof Error ? error.message : "An unknown error occurred" });
             return;
         }
 
@@ -180,7 +180,7 @@ export default definePlugin({
                 task: quest.config.taskConfigV2.tasks[taskName]
             });
 
-            showToast("This quest does not contain application data!", "failure");
+            showToast({ text: "This quest does not contain application data!", variant: "critical" });
             return;
         }
 
@@ -227,7 +227,7 @@ export default definePlugin({
             showQuestNotification
         };
 
-        showToast(`Starting quest: ${questName}`, "success");
+        showToast({ text: `Starting quest: ${questName}`, variant: "success" });
         void runQuestStep(context, () => questCompleters[taskName](context));
     }
 });
